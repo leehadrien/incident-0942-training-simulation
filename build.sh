@@ -2,7 +2,11 @@
 set -o errexit
 
 pip install -r requirements.txt
-cd frontend
-npm ci
-npm run build
 
+FRONTEND_DIR="frontend"
+if [[ ! -f "$FRONTEND_DIR/package.json" ]]; then
+  FRONTEND_DIR="."
+fi
+
+npm --prefix "$FRONTEND_DIR" ci
+npm --prefix "$FRONTEND_DIR" run build
