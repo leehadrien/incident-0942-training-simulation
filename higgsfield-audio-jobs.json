@@ -1,0 +1,35 @@
+{
+  "engine": "elevenlabs",
+  "voice": {
+    "name": "Remy",
+    "voice_id": "b9c5c5db-4eb7-468a-a0b7-d06423af0335",
+    "voice_type": "preset"
+  },
+  "clips": {
+    "intro": "4fe6ce3b-4a28-494a-a5b7-36f36d65f20d",
+    "diagnose_correct": "30d66310-5558-4b70-8171-71ecd8aa8fb8",
+    "contain_correct": "dd84bccd-6751-404c-b25d-2bd928301eda",
+    "recover_correct": "4b27693f-4c96-49a8-931b-0f402b438178",
+    "communicate_correct": "ca410705-759a-437f-8b6a-ce9dba199653",
+    "diagnose_database": "060c1c53-ad87-4284-a9a9-62667fecfdfb",
+    "diagnose_traffic": "426438a4-641e-4fbb-9ba7-747e390bceb0",
+    "contain_rollback_first": "bd4b2b76-30ab-46bd-a653-1e33e0baa17c",
+    "contain_scale_database": "26d2d1d3-85be-44f4-b1f1-0e6fab39c140",
+    "recover_restart_all": "9524e97c-12e4-453e-8865-1345a5b9ad4d",
+    "recover_resume_traffic": "5f359444-2ecc-4442-a9f8-3800458b13d4",
+    "communicate_resolved": "36ffbef0-ff08-4a11-8aee-02ffc16436e3",
+    "communicate_log_dump": "ba354473-2ed7-4280-8b9c-9a8543bf2488",
+    "hint_diagnose": "7cb312d5-0341-4ce9-887a-3e9a59263a4d",
+    "hint_contain": "898701dc-a4f2-4af0-bb0a-5fc1617b7b25",
+    "hint_recover": "25cbbaff-dafc-4329-9277-a964f7728e31",
+    "hint_communicate": "cdadb3b4-638d-4b34-bcf6-d3067888acc2",
+    "evidence_deployment": "b5672f71-301b-40de-85af-46a91e772bfb",
+    "evidence_logs": "c29307db-317e-4ce5-ac9f-61f439cee808",
+    "evidence_trace": "f9dfaed0-76e0-41b3-aca2-0eea4b7517c7",
+    "metric_checkout_success": "52c98310-da06-4344-8cfe-9a38b02a3136",
+    "metric_requests": "755e6297-8357-4593-823d-a5114ae00769",
+    "metric_error_rate": "8f777b8d-9669-4bd5-aa0d-d9a83bc173d8",
+    "metric_retry_rate": "82131f81-2920-4ac1-854d-b12be0aa1982",
+    "metric_incident_elapsed": "047fabdc-8d7f-44a3-893b-7574f3f4689b"
+  }
+}
