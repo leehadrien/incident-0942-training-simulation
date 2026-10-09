@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, create_engine, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -71,15 +72,102 @@ class XAPIStatement(db.Model):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
 
 
+DB_CONNECT_TIMEOUT_SECONDS = 3
+# A hostname can carry several A records, and psycopg tries each one in turn,
+# so the per-attempt timeout alone does not bound the wait. This caps the whole
+# probe, and therefore how long a cold start can be delayed by a dead database.
+DB_PROBE_DEADLINE_SECONDS = 8
+SQLITE_FALLBACK_URI = f"sqlite:///{ROOT / 'training.db'}"
+
+
+def _normalise_database_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+def _with_connect_timeout(url: str) -> str:
+    """Bounds how long one Postgres connection attempt may take.
+
+    Without a bound, an unreachable host leaves the worker blocking on DNS
+    and TCP for as long as the platform allows. That reaches a visitor as a
+    connection which is accepted and then sends nothing at all, which is
+    indistinguishable from the site being broken.
+    """
+    if not url.startswith("postgresql+psycopg://") or "connect_timeout=" in url:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}connect_timeout={DB_CONNECT_TIMEOUT_SECONDS}"
+
+
+def _database_is_usable(url: str) -> tuple[bool, str]:
+    """Opens one real connection, so an unusable database is found at boot
+    rather than on a visitor's first request. Bounded by a hard deadline so
+    boot cannot stall however the database is failing."""
+
+    def probe() -> None:
+        engine = create_engine(url, pool_pre_ping=True)
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+        finally:
+            engine.dispose()
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        executor.submit(probe).result(timeout=DB_PROBE_DEADLINE_SECONDS)
+        return True, ""
+    except FutureTimeout:
+        return False, f"probe exceeded {DB_PROBE_DEADLINE_SECONDS}s"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    finally:
+        # Never block boot waiting on a probe thread that is still stuck.
+        executor.shutdown(wait=False)
+
+
+def _resolve_database_uri() -> tuple[str, str]:
+    """Chooses the database to run on, and reports which one it chose.
+
+    Render deletes its free Postgres instances after 30 days, but the
+    DATABASE_URL environment variable outlives the database. The host then
+    stops resolving while the setting still looks perfectly present, so the
+    old `os.getenv(..., sqlite_default)` fallback never fired: the variable
+    was not missing, only dead. Every worker died on boot trying to reach
+    it, and the service accepted connections and sent zero bytes.
+
+    The connection is now tested rather than assumed, and an unusable one
+    falls back to SQLite so the training still runs.
+    """
+    configured = os.getenv("DATABASE_URL", "").strip()
+    if not configured:
+        return SQLITE_FALLBACK_URI, "sqlite (no DATABASE_URL configured)"
+
+    url = _with_connect_timeout(_normalise_database_url(configured))
+    usable, detail = _database_is_usable(url)
+    if usable:
+        return url, "configured database"
+
+    print(
+        f"[incident-0942] configured database is unreachable, "
+        f"falling back to SQLite: {detail}",
+        flush=True,
+    )
+    return SQLITE_FALLBACK_URI, f"sqlite (fallback after {detail[:120]})"
+
+
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
-    database_url = os.getenv("DATABASE_URL", f"sqlite:///{ROOT / 'training.db'}")
-    if database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
-    elif database_url.startswith("postgresql://"):
-        database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if test_config and test_config.get("SQLALCHEMY_DATABASE_URI"):
+        database_url = test_config["SQLALCHEMY_DATABASE_URI"]
+        database_backend = "test configuration"
+    else:
+        database_url, database_backend = _resolve_database_uri()
 
     app.config.update(
+        DATABASE_BACKEND=database_backend,
         SQLALCHEMY_DATABASE_URI=database_url,
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SECRET_KEY=os.getenv("SECRET_KEY", "local-development-only"),
@@ -100,7 +188,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 
     with app.app_context():
-        db.create_all()
+        try:
+            db.create_all()
+        except Exception as exc:
+            # The pages still render and the simulation still runs; only
+            # attempt recording is lost. A broken table is not a reason to
+            # serve nothing at all.
+            app.config["DATABASE_BACKEND"] = f"unavailable ({type(exc).__name__})"
+            print(f"[incident-0942] could not prepare tables: {exc!r}", flush=True)
 
     register_routes(app)
     return app
@@ -134,7 +229,11 @@ def register_routes(app: Flask) -> None:
 
     @app.get("/api/health")
     def health():
-        return jsonify({"status": "ok", "service": "incident-0942"})
+        return jsonify({
+            "status": "ok",
+            "service": "incident-0942",
+            "database": app.config.get("DATABASE_BACKEND", "unknown"),
+        })
 
     @app.post("/api/session")
     def create_session():
